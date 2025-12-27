@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import date
-import re
 
 # ============================================================
 # STREAMLIT CONFIG
@@ -13,8 +12,18 @@ st.set_page_config(
     page_icon="🏦"
 )
 
-st.title("🏦 Mutual Fund Bulk Deal Flow – NSE")
-st.caption("Detect Accumulation & Exit from NSE Bulk / Block Deals")
+st.title("🏦 Mutual Fund Bulk / Block Deal Flow – NSE")
+st.caption("Identify Mutual Fund Accumulation & Exit using NSE disclosures")
+
+# ============================================================
+# DATE FILTER (SIDEBAR)
+# ============================================================
+st.sidebar.header("📅 Trade Date Filter")
+
+selected_date = st.sidebar.date_input(
+    "Select Trade Date",
+    value=date.today()
+)
 
 # ============================================================
 # NSE SAFE SESSION
@@ -26,11 +35,12 @@ def nse_session():
         "Accept": "application/json",
         "Referer": "https://www.nseindia.com/"
     })
+    # Pre-hit homepage (mandatory)
     s.get("https://www.nseindia.com", timeout=5)
     return s
 
 # ============================================================
-# FETCH BULK + BLOCK DEALS
+# FETCH BULK + BLOCK DEAL DATA
 # ============================================================
 @st.cache_data(ttl=300)
 def fetch_bulk_block():
@@ -42,16 +52,17 @@ def fetch_bulk_block():
     }
 
     frames = []
+
     for deal_type, url in urls.items():
         r = s.get(url, timeout=10)
         if r.status_code != 200:
             continue
 
         data = r.json().get("data", [])
-        df = pd.DataFrame(data)
-        if df.empty:
+        if not data:
             continue
 
+        df = pd.DataFrame(data)
         df["Deal Type"] = deal_type
         frames.append(df)
 
@@ -59,8 +70,13 @@ def fetch_bulk_block():
         return pd.DataFrame()
 
     df = pd.concat(frames, ignore_index=True)
-    df["Trade Date"] = pd.to_datetime(df["tradeDate"]).dt.date
-    return df[df["Trade Date"] == date.today()]
+
+    # Convert NSE date
+    df["Trade Date"] = pd.to_datetime(
+        df["tradeDate"], errors="coerce"
+    ).dt.date
+
+    return df
 
 # ============================================================
 # MUTUAL FUND IDENTIFICATION
@@ -68,20 +84,23 @@ def fetch_bulk_block():
 def is_mutual_fund(name: str) -> bool:
     if not isinstance(name, str):
         return False
+
     keywords = [
-        "MUTUAL FUND", "MF", "TRUSTEE", "ASSET MANAGEMENT",
-        "AMC", "INVESCO", "SBI", "HDFC", "ICICI", "AXIS",
-        "KOTAK", "NIPPON", "DSP", "UTI", "MIRAE", "ADITYA"
+        "MUTUAL FUND", "MF", "TRUSTEE", "AMC",
+        "ASSET MANAGEMENT", "SBI", "HDFC", "ICICI",
+        "AXIS", "KOTAK", "NIPPON", "DSP",
+        "UTI", "MIRAE", "ADITYA", "INVESCO"
     ]
+
     name = name.upper()
     return any(k in name for k in keywords)
 
 # ============================================================
-# CLASSIFICATION LOGIC
+# CLASSIFY MF FLOW
 # ============================================================
-def classify(row):
-    buyer_mf = is_mutual_fund(row["clientName"])
-    seller_mf = is_mutual_fund(row["sellClientName"])
+def classify_flow(row):
+    buyer_mf = is_mutual_fund(row.get("clientName"))
+    seller_mf = is_mutual_fund(row.get("sellClientName"))
 
     if buyer_mf and not seller_mf:
         return "🟢 MF ACCUMULATION"
@@ -91,41 +110,47 @@ def classify(row):
         return "⚪ IGNORE"
 
 # ============================================================
-# LOAD DATA
+# LOAD & FILTER DATA
 # ============================================================
 df = fetch_bulk_block()
 
+df = df[df["Trade Date"] == selected_date]
+
 if df.empty:
-    st.warning("No Bulk / Block Deals found for today.")
+    st.warning(f"No Bulk / Block Deals found for {selected_date}")
     st.stop()
 
-df["MF Signal"] = df.apply(classify, axis=1)
+df["MF Signal"] = df.apply(classify_flow, axis=1)
 
-# ============================================================
-# FILTER ACTIONABLE FLOWS
-# ============================================================
+# Keep only actionable signals
 action_df = df[df["MF Signal"] != "⚪ IGNORE"].copy()
 
 # ============================================================
-# DISPLAY SUMMARY
+# SUMMARY METRICS
 # ============================================================
-st.subheader("📊 Today’s Mutual Fund Activity Summary")
+st.subheader("📊 Mutual Fund Activity Summary")
 
 c1, c2 = st.columns(2)
-c1.metric("🟢 MF Accumulation Trades", (action_df["MF Signal"] == "🟢 MF ACCUMULATION").sum())
-c2.metric("🔴 MF Exit Trades", (action_df["MF Signal"] == "🔴 MF EXIT").sum())
+c1.metric(
+    "🟢 MF Accumulation Trades",
+    (action_df["MF Signal"] == "🟢 MF ACCUMULATION").sum()
+)
+c2.metric(
+    "🔴 MF Exit Trades",
+    (action_df["MF Signal"] == "🔴 MF EXIT").sum()
+)
 
 # ============================================================
 # DISPLAY TABLE
 # ============================================================
-st.subheader("📋 Actionable MF Transactions")
+st.subheader("📋 Actionable Mutual Fund Transactions")
 
 display_cols = {
     "symbol": "Stock",
-    "Deal Type": "Deal",
+    "Deal Type": "Deal Type",
     "clientName": "Buyer",
     "sellClientName": "Seller",
-    "quantity": "Qty",
+    "quantity": "Quantity",
     "price": "Price",
     "MF Signal": "MF Signal"
 }
@@ -135,7 +160,7 @@ table = action_df[list(display_cols.keys())].rename(columns=display_cols)
 st.dataframe(
     table.sort_values("MF Signal"),
     use_container_width=True,
-    height=500
+    height=520
 )
 
 # ============================================================
@@ -143,11 +168,10 @@ st.dataframe(
 # ============================================================
 st.markdown("""
 ---
-**Interpretation Guide**
-
+### 🔎 Interpretation Guide
 🟢 **MF ACCUMULATION** → Strong institutional buying (Bullish)  
-🔴 **MF EXIT** → Distribution / exit signal (Bearish)  
-⚪ **Ignored** → Internal MF churn or non-institutional  
+🔴 **MF EXIT** → Institutional distribution (Bearish)  
+⚪ **Ignored** → MF↔MF or Non-MF↔Non-MF (Noise)
 
 Designed for **NSE positional & swing traders**
 """)
