@@ -1,0 +1,52 @@
+name: NSE Bulk & Block Daily Update
+
+on:
+  schedule:
+    # Runs daily at 7:00 PM IST (13:30 UTC)
+    - cron: "30 13 * * *"
+
+  workflow_dispatch:   # 👈 Manual Run Button
+
+jobs:
+  fetch-nse-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 📊 Run NSE Bulk/Block Fetch Script
+        run: |
+          python nse_bulk_fetch_csv.py
+
+      - name: 📁 Show data folder (debug)
+        run: |
+          ls -lh data || true
+
+      - name: 🔄 Commit & Push Updated Data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add data/*.csv
+
+          # Commit only if there are changes
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "📈 Daily NSE Bulk/Block data update"
+            git push
+          fi
