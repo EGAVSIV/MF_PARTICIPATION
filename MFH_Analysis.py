@@ -1,177 +1,171 @@
 import streamlit as st
 import pandas as pd
-import requests
 from datetime import date
 
-# ============================================================
-# STREAMLIT CONFIG
-# ============================================================
+# =====================================================
+# PAGE CONFIG
+# =====================================================
 st.set_page_config(
-    page_title="Mutual Fund Bulk Deal Intelligence",
-    layout="wide",
-    page_icon="🏦"
+    page_title="Mutual Fund Bulk / Block Analysis",
+    page_icon="🏦",
+    layout="wide"
 )
 
-st.title("🏦 Mutual Fund Bulk / Block Deal Flow – NSE")
-st.caption("Identify Mutual Fund Accumulation & Exit using NSE disclosures")
+st.title("🏦 Mutual Fund Bulk / Block Deal Analysis")
+st.caption("CSV-based | Fast | No NSE dependency")
 
-# ============================================================
-# DATE FILTER (SIDEBAR)
-# ============================================================
-st.sidebar.header("📅 Trade Date Filter")
+# =====================================================
+# LOAD MASTER DATA
+# =====================================================
+DATA_FILE = "data/bulk_block_master.csv"
 
-selected_date = st.sidebar.date_input(
-    "Select Trade Date",
-    value=date.today()
-)
+@st.cache_data(show_spinner=False)
+def load_data():
+    df = pd.read_csv(DATA_FILE)
 
-# ============================================================
-# NSE SAFE SESSION
-# ============================================================
-def nse_session():
-    s = requests.Session()
-    s.headers.update({
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-        "Referer": "https://www.nseindia.com/"
-    })
-    # Pre-hit homepage (mandatory)
-    s.get("https://www.nseindia.com", timeout=5)
-    return s
+    # Normalize column names (safe)
+    df.columns = df.columns.str.strip()
 
-# ============================================================
-# FETCH BULK + BLOCK DEAL DATA
-# ============================================================
-@st.cache_data(ttl=300)
-def fetch_bulk_block():
-    s = nse_session()
-
-    urls = {
-        "Bulk": "https://www.nseindia.com/api/bulk-deals",
-        "Block": "https://www.nseindia.com/api/block-deals"
-    }
-
-    frames = []
-
-    for deal_type, url in urls.items():
-        r = s.get(url, timeout=10)
-        if r.status_code != 200:
-            continue
-
-        data = r.json().get("data", [])
-        if not data:
-            continue
-
-        df = pd.DataFrame(data)
-        df["Deal Type"] = deal_type
-        frames.append(df)
-
-    if not frames:
-        return pd.DataFrame()
-
-    df = pd.concat(frames, ignore_index=True)
-
-    # Convert NSE date
-    df["Trade Date"] = pd.to_datetime(
-        df["tradeDate"], errors="coerce"
-    ).dt.date
+    # Ensure Trade Date exists
+    if "Trade Date" not in df.columns:
+        # fallback safety (should not happen)
+        for c in df.columns:
+            if c.lower().replace(" ", "") in ("date", "tradedate", "dt"):
+                df["Trade Date"] = pd.to_datetime(df[c], errors="coerce").dt.date
+                break
+    else:
+        df["Trade Date"] = pd.to_datetime(df["Trade Date"], errors="coerce").dt.date
 
     return df
 
-# ============================================================
-# MUTUAL FUND IDENTIFICATION
-# ============================================================
-def is_mutual_fund(name: str) -> bool:
-    if not isinstance(name, str):
-        return False
-
-    keywords = [
-        "MUTUAL FUND", "MF", "TRUSTEE", "AMC",
-        "ASSET MANAGEMENT", "SBI", "HDFC", "ICICI",
-        "AXIS", "KOTAK", "NIPPON", "DSP",
-        "UTI", "MIRAE", "ADITYA", "INVESCO"
-    ]
-
-    name = name.upper()
-    return any(k in name for k in keywords)
-
-# ============================================================
-# CLASSIFY MF FLOW
-# ============================================================
-def classify_flow(row):
-    buyer_mf = is_mutual_fund(row.get("clientName"))
-    seller_mf = is_mutual_fund(row.get("sellClientName"))
-
-    if buyer_mf and not seller_mf:
-        return "🟢 MF ACCUMULATION"
-    elif seller_mf and not buyer_mf:
-        return "🔴 MF EXIT"
-    else:
-        return "⚪ IGNORE"
-
-# ============================================================
-# LOAD & FILTER DATA
-# ============================================================
-df = fetch_bulk_block()
-
-df = df[df["Trade Date"] == selected_date]
+df = load_data()
 
 if df.empty:
-    st.warning(f"No Bulk / Block Deals found for {selected_date}")
+    st.error("No data found in bulk_block_master.csv")
     st.stop()
 
-df["MF Signal"] = df.apply(classify_flow, axis=1)
+# =====================================================
+# SIDEBAR FILTERS
+# =====================================================
+st.sidebar.header("📅 Filters")
 
-# Keep only actionable signals
-action_df = df[df["MF Signal"] != "⚪ IGNORE"].copy()
+min_date = df["Trade Date"].min()
+max_date = df["Trade Date"].max()
 
-# ============================================================
+date_range = st.sidebar.date_input(
+    "Select Date Range",
+    value=(min_date, max_date),
+    min_value=min_date,
+    max_value=max_date
+)
+
+if len(date_range) != 2:
+    st.warning("Please select a valid date range")
+    st.stop()
+
+start_date, end_date = date_range
+
+# =====================================================
+# FILTER DATA
+# =====================================================
+df = df[
+    (df["Trade Date"] >= start_date) &
+    (df["Trade Date"] <= end_date)
+].copy()
+
+# =====================================================
+# MUTUAL FUND IDENTIFICATION
+# =====================================================
+MF_KEYWORDS = [
+    "MUTUAL FUND", "MF", "AMC", "TRUSTEE",
+    "SBI", "HDFC", "ICICI", "AXIS",
+    "KOTAK", "NIPPON", "DSP", "UTI",
+    "MIRAE", "ADITYA", "INVESCO"
+]
+
+def is_mutual_fund(name):
+    if not isinstance(name, str):
+        return False
+    name = name.upper()
+    return any(k in name for k in MF_KEYWORDS)
+
+# =====================================================
+# CLASSIFY MF FLOW
+# =====================================================
+def classify(row):
+    buyer = row.get("Client Name", "")
+    side = str(row.get("Buy/Sell", "")).upper()
+
+    if is_mutual_fund(buyer) and side == "BUY":
+        return "🟢 MF ACCUMULATION"
+    if is_mutual_fund(buyer) and side == "SELL":
+        return "🔴 MF EXIT"
+    return "⚪ IGNORE"
+
+df["MF Signal"] = df.apply(classify, axis=1)
+
+# Keep only actionable
+df_action = df[df["MF Signal"] != "⚪ IGNORE"].copy()
+
+# =====================================================
 # SUMMARY METRICS
-# ============================================================
-st.subheader("📊 Mutual Fund Activity Summary")
+# =====================================================
+c1, c2, c3 = st.columns(3)
 
-c1, c2 = st.columns(2)
-c1.metric(
-    "🟢 MF Accumulation Trades",
-    (action_df["MF Signal"] == "🟢 MF ACCUMULATION").sum()
+c1.metric("🟢 MF Accumulation Trades",
+          (df_action["MF Signal"] == "🟢 MF ACCUMULATION").sum())
+
+c2.metric("🔴 MF Exit Trades",
+          (df_action["MF Signal"] == "🔴 MF EXIT").sum())
+
+c3.metric("📊 Total Records", len(df_action))
+
+# =====================================================
+# STOCK-WISE SUMMARY
+# =====================================================
+st.subheader("📊 Stock-wise Mutual Fund Activity")
+
+stock_summary = (
+    df_action
+    .groupby(["Symbol", "MF Signal"])
+    .agg({
+        "Quantity Traded": "sum"
+    })
+    .reset_index()
+    .sort_values("Quantity Traded", ascending=False)
 )
-c2.metric(
-    "🔴 MF Exit Trades",
-    (action_df["MF Signal"] == "🔴 MF EXIT").sum()
-)
 
-# ============================================================
-# DISPLAY TABLE
-# ============================================================
-st.subheader("📋 Actionable Mutual Fund Transactions")
+st.dataframe(stock_summary, use_container_width=True, height=400)
 
-display_cols = {
-    "symbol": "Stock",
-    "Deal Type": "Deal Type",
-    "clientName": "Buyer",
-    "sellClientName": "Seller",
-    "quantity": "Quantity",
-    "price": "Price",
-    "MF Signal": "MF Signal"
-}
+# =====================================================
+# DETAILED TABLE
+# =====================================================
+st.subheader("📋 Detailed Transactions")
 
-table = action_df[list(display_cols.keys())].rename(columns=display_cols)
+show_cols = [
+    "Trade Date", "Symbol", "Security Name",
+    "Client Name", "Buy/Sell",
+    "Quantity Traded",
+    "Trade Price / Wght. Avg. Price",
+    "MF Signal"
+]
+
+available_cols = [c for c in show_cols if c in df_action.columns]
 
 st.dataframe(
-    table.sort_values("MF Signal"),
+    df_action[available_cols].sort_values("Trade Date", ascending=False),
     use_container_width=True,
-    height=520
+    height=500
 )
 
-# ============================================================
+# =====================================================
 # FOOTER
-# ============================================================
+# =====================================================
 st.markdown("""
 ---
-### 🔎 Interpretation Guide
-🟢 **MF ACCUMULATION** → Strong institutional buying (Bullish)  
-🔴 **MF EXIT** → Institutional distribution (Bearish)  
-⚪ **Ignored** → MF↔MF or Non-MF↔Non-MF (Noise)
+🟢 **MF Accumulation** → Mutual Fund buying (bullish)  
+🔴 **MF Exit** → Mutual Fund selling (bearish)  
 
-Designed for **NSE positional & swing traders**
+Data Source: NSE Bulk & Block Deals (CSV Archive)  
+Designed for **positional & swing analysis**
 """)
