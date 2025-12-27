@@ -31,7 +31,11 @@ MF_KEYWORDS = [
     "OLD BRIDGE","PGIM INDIA","PPFAS","QUANT",
     "QUANTUM","SAMCO","SBI","SHRIRAM","SUNDARAM",
     "TATA","TAURUS","THE WEALTH COMPANY","TRUST",
-    "UNIFI","UNION","UTI","WHITEOAK CAPITAL","ZERODHA"
+    "UNIFI","UNION","UTI","WHITEOAK CAPITAL","ZERODHA",
+    "General Insurance","GIC RE","LIC","LIFE INSURANCE",
+    "Max Financial","Star Health","Punjab National Bank",
+    "PNB", "Canara","IDBI","Union Bank","Indian Bank",
+    "The New India Assurance",
 ]
 
 MF_REGEX = re.compile(
