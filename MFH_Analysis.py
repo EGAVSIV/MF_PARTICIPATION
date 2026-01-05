@@ -13,23 +13,27 @@ st.set_page_config(
 )
 
 st.title("🏦 Mutual Fund Bulk / Block Deal Analysis")
-st.caption("⚡ Parquet-based | Cloud-safe | Lazy Loaded")
+st.caption("⚡ Parquet-based | Cloud-safe | No cache deadlocks")
 
 DATA_FILE = "data/bulk_block_master.parquet"
 
 # =====================================================
-# SIDEBAR CONTROLS (CRITICAL)
+# SIDEBAR CONTROLS
 # =====================================================
 st.sidebar.header("⚙️ Controls")
+
+if not os.path.exists(DATA_FILE):
+    st.error("❌ Parquet file not found")
+    st.stop()
 
 load_btn = st.sidebar.button("📥 Load MF Bulk/Block Data")
 
 if not load_btn:
-    st.info("👈 Click **Load MF Bulk/Block Data** to start analysis")
+    st.info("👈 Click **Load MF Bulk/Block Data** to start")
     st.stop()
 
 # =====================================================
-# OFFICIAL MF NAMES
+# MF KEYWORDS (RAW LIST ONLY)
 # =====================================================
 MF_KEYWORDS = [
     "360 ONE","ABAKKUS","ADITYA BIRLA SUN LIFE","ANGEL ONE",
@@ -44,59 +48,34 @@ MF_KEYWORDS = [
     "QUANTUM","SAMCO","SBI","SHRIRAM","SUNDARAM",
     "TATA","TAURUS","THE WEALTH COMPANY","TRUSTMUTUAL",
     "UNIFI","UNION","UTI","WHITEOAK CAPITAL","ZERODHA",
-    "General Insurance","GIC RE","LIC","LIFE INSURANCE",
+    "General Insurance","GIC RE","LIFE INSURANCE",
     "Max Financial","Star Health","Punjab National Bank",
-    "PNB","Canara","IDBI","Union Bank","Indian Bank",
+    "PNB","Canara","Union Bank","Indian Bank",
     "The New India Assurance",
 ]
 
-MF_REGEX = re.compile(
-    r"\b(" + "|".join(re.escape(x) for x in MF_KEYWORDS) + r")\b",
-    flags=re.IGNORECASE
-)
-
 # =====================================================
-# LOAD + PREPARE DATA (CACHED, SAFE)
+# LOAD DATA (NO CACHE)
 # =====================================================
-@st.cache_data(show_spinner=True, ttl=3600)
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return pd.DataFrame()
-
+with st.spinner("Loading parquet..."):
     df = pd.read_parquet(DATA_FILE)
 
-    if df.empty:
-        return df
+df.columns = df.columns.str.strip()
 
-    df.columns = df.columns.str.strip()
+df["Trade Date"] = pd.to_datetime(
+    df["Trade Date"], errors="coerce"
+).dt.date
 
-    # Date normalization
-    df["Trade Date"] = pd.to_datetime(
-        df["Trade Date"], errors="coerce"
-    ).dt.date
+df["Client Name"] = df["Client Name"].astype(str).str.upper()
+df["Buy/Sell"] = df["Buy/Sell"].astype(str).str.upper()
 
-    # Normalize strings
-    df["Client Name"] = df["Client Name"].astype(str).str.upper()
-    df["Buy/Sell"] = df["Buy/Sell"].astype(str).str.upper()
+# Compile regex INSIDE runtime (CRITICAL)
+mf_pattern = r"\b(" + "|".join(map(re.escape, MF_KEYWORDS)) + r")\b"
+is_mf = df["Client Name"].str.contains(mf_pattern, case=False, regex=True, na=False)
 
-    # MF detection
-    is_mf = df["Client Name"].str.contains(MF_REGEX, na=False)
-
-    df["MF Signal"] = "⚪ IGNORE"
-    df.loc[is_mf & (df["Buy/Sell"] == "BUY"), "MF Signal"] = "🟢 MF ACCUMULATION"
-    df.loc[is_mf & (df["Buy/Sell"] == "SELL"), "MF Signal"] = "🔴 MF EXIT"
-
-    return df
-
-# =====================================================
-# LOAD DATA
-# =====================================================
-with st.spinner("Loading parquet data..."):
-    df = load_data()
-
-if df.empty:
-    st.error("❌ No data available or parquet file missing")
-    st.stop()
+df["MF Signal"] = "⚪ IGNORE"
+df.loc[is_mf & (df["Buy/Sell"] == "BUY"), "MF Signal"] = "🟢 MF ACCUMULATION"
+df.loc[is_mf & (df["Buy/Sell"] == "SELL"), "MF Signal"] = "🔴 MF EXIT"
 
 # =====================================================
 # DATE FILTER
@@ -127,7 +106,7 @@ c2.metric("🔴 MF Exit", (df["MF Signal"] == "🔴 MF EXIT").sum())
 c3.metric("📊 Records", len(df))
 
 # =====================================================
-# STOCK SUMMARY
+# TABLES
 # =====================================================
 st.subheader("📊 Stock-wise MF Activity")
 
@@ -139,9 +118,6 @@ summary = (
 
 st.dataframe(summary, use_container_width=True, height=350)
 
-# =====================================================
-# DETAILS
-# =====================================================
 st.subheader("📋 Detailed Transactions")
 
 st.dataframe(
@@ -156,4 +132,4 @@ st.dataframe(
     height=450
 )
 
-st.caption("🚀 Lazy-loaded | Parquet-native | Streamlit Cloud safe")
+st.caption("✅ Stable on Streamlit Cloud | No cache | No deadlocks")
