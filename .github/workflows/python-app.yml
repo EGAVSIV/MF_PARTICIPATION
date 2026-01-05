@@ -30,7 +30,7 @@ jobs:
 
       - name: 📊 Run NSE Bulk/Block Fetch Script
         run: |
-          python bulkblock_datafecthing.py
+          python bulkblock_datafecthing1.py
 
       - name: 📁 Show data folder (debug)
         run: |
