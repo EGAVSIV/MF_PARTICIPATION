@@ -12,9 +12,10 @@ st.set_page_config(
 )
 
 st.title("🏦 Mutual Fund Bulk / Block Deal Analysis")
-st.caption("⚡ Optimized | CSV-based | Fast")
+st.caption("⚡ Optimized | Parquet-based | Ultra Fast")
 
-DATA_FILE = "data/bulk_block_master.csv"
+# 🔁 SWITCHED TO PARQUET
+DATA_FILE = "data/bulk_block_master.parquet"
 
 # =====================================================
 # OFFICIAL MF NAMES (CLEAN)
@@ -48,7 +49,8 @@ MF_REGEX = re.compile(
 # =====================================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_data():
-    df = pd.read_csv(DATA_FILE)
+    # 🔁 PARQUET READ
+    df = pd.read_parquet(DATA_FILE)
 
     df.columns = df.columns.str.strip()
 
@@ -134,4 +136,4 @@ st.dataframe(
     height=450
 )
 
-st.caption("🚀 Optimized for Streamlit Cloud – no row-wise apply")
+st.caption("🚀 Parquet-powered | Cloud-safe | Scales to millions of rows")
