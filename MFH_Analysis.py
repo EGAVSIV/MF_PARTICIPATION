@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
+import os
 
 # =====================================================
 # PAGE CONFIG
@@ -12,13 +13,23 @@ st.set_page_config(
 )
 
 st.title("🏦 Mutual Fund Bulk / Block Deal Analysis")
-st.caption("⚡ Optimized | Parquet-based | Ultra Fast")
+st.caption("⚡ Parquet-based | Cloud-safe | Lazy Loaded")
 
-# 🔁 SWITCHED TO PARQUET
 DATA_FILE = "data/bulk_block_master.parquet"
 
 # =====================================================
-# OFFICIAL MF NAMES (CLEAN)
+# SIDEBAR CONTROLS (CRITICAL)
+# =====================================================
+st.sidebar.header("⚙️ Controls")
+
+load_btn = st.sidebar.button("📥 Load MF Bulk/Block Data")
+
+if not load_btn:
+    st.info("👈 Click **Load MF Bulk/Block Data** to start analysis")
+    st.stop()
+
+# =====================================================
+# OFFICIAL MF NAMES
 # =====================================================
 MF_KEYWORDS = [
     "360 ONE","ABAKKUS","ADITYA BIRLA SUN LIFE","ANGEL ONE",
@@ -35,7 +46,7 @@ MF_KEYWORDS = [
     "UNIFI","UNION","UTI","WHITEOAK CAPITAL","ZERODHA",
     "General Insurance","GIC RE","LIC","LIFE INSURANCE",
     "Max Financial","Star Health","Punjab National Bank",
-    "PNB", "Canara","IDBI","Union Bank","Indian Bank",
+    "PNB","Canara","IDBI","Union Bank","Indian Bank",
     "The New India Assurance",
 ]
 
@@ -45,12 +56,17 @@ MF_REGEX = re.compile(
 )
 
 # =====================================================
-# LOAD + PREPARE DATA (CACHED)
+# LOAD + PREPARE DATA (CACHED, SAFE)
 # =====================================================
-@st.cache_data(show_spinner=False, ttl=3600)
+@st.cache_data(show_spinner=True, ttl=3600)
 def load_data():
-    # 🔁 PARQUET READ
+    if not os.path.exists(DATA_FILE):
+        return pd.DataFrame()
+
     df = pd.read_parquet(DATA_FILE)
+
+    if df.empty:
+        return df
 
     df.columns = df.columns.str.strip()
 
@@ -59,11 +75,11 @@ def load_data():
         df["Trade Date"], errors="coerce"
     ).dt.date
 
-    # Uppercase once
+    # Normalize strings
     df["Client Name"] = df["Client Name"].astype(str).str.upper()
     df["Buy/Sell"] = df["Buy/Sell"].astype(str).str.upper()
 
-    # 🔥 VECTORISED MF DETECTION
+    # MF detection
     is_mf = df["Client Name"].str.contains(MF_REGEX, na=False)
 
     df["MF Signal"] = "⚪ IGNORE"
@@ -72,14 +88,18 @@ def load_data():
 
     return df
 
-df = load_data()
+# =====================================================
+# LOAD DATA
+# =====================================================
+with st.spinner("Loading parquet data..."):
+    df = load_data()
 
 if df.empty:
-    st.error("No data available")
+    st.error("❌ No data available or parquet file missing")
     st.stop()
 
 # =====================================================
-# SIDEBAR FILTER
+# DATE FILTER
 # =====================================================
 st.sidebar.header("📅 Date Filter")
 
@@ -87,7 +107,7 @@ min_d, max_d = df["Trade Date"].min(), df["Trade Date"].max()
 
 start, end = st.sidebar.date_input(
     "Select Date Range",
-    value=(min_d, max_d),
+    value=(max_d, max_d),
     min_value=min_d,
     max_value=max_d
 )
@@ -136,4 +156,4 @@ st.dataframe(
     height=450
 )
 
-st.caption("🚀 Parquet-powered | Cloud-safe | Scales to millions of rows")
+st.caption("🚀 Lazy-loaded | Parquet-native | Streamlit Cloud safe")
